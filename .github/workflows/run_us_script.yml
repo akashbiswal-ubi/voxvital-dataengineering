@@ -37,4 +37,7 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DB_URL: ${{ secrets.DB_URL }}
           DB_NAME: ${{ secrets.DB_NAME }}
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          DATADUMP_PREFIX: ${{ secrets.DATADUMP_PREFIX }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: python src/us_data.py

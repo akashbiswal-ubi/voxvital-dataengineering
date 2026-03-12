@@ -180,7 +180,7 @@ def create_mapping_eu(brand_name):
     return extracted_data
 
 def main():
-    file_name = f"drug_labels_eu_top_25_{time.time()}.json"
+    file_name = f"drug_labels_eu_top_25_{int(time.time())}.json"
     df = pd.read_csv("top_25_drugs.csv", sep="\t")
 
     top_25_drugs = df["Drug"].to_list()[16:]

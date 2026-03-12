@@ -169,7 +169,7 @@ def create_mapping_us(doc, given_drug_name=None):
     return mapping
 
 def main():
-    file_name = f"drug_labels_us_top_25_{time.time()}.json"
+    file_name = f"drug_labels_us_top_25_{int(time.time())}.json"
     df = pd.read_csv("top_25_drugs.csv", sep="\t")
 
     top_25_drugs = df["Drug"].to_list()
@@ -201,6 +201,8 @@ def main():
     ## Save Data of JSON file to S3 bucket
     s3_client = session.client("s3", region_name=os.getenv("AWS_REGION"))
     try:
+        print(f"Uploading {file_name} to S3 path {os.getenv('BUCKET_NAME')}/{os.getenv('DATADUMP_PREFIX')}{file_name}...")
+        print(f"File size: {os.path.getsize(file_name)} bytes")
         s3_client.upload_file(file_name, os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name)
         print(f"Successfully uploaded {file_name} to S3 bucket {os.getenv('BUCKET_NAME')}.")
     except Exception as e:
