@@ -1,0 +1,30 @@
+name: Run Script for US Data
+
+on:
+  schedule:
+    - cron: "30 5 * * 1"   # Runs every Monday at 11 AM IST
+  workflow_dispatch:       # Allows manual trigger
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run script
+        env:
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+        run: python src/us_data.py
