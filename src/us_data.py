@@ -6,12 +6,16 @@ import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type
 from dotenv import load_dotenv
 import time
+import boto3
 
 load_dotenv()
 
 from db_operations import upsert_records_from_json, POSTGRES_ENDPOINT
 
-
+if not os.getenv("AWS_PROFILE"):
+    session = boto3.Session()
+else:
+    session = boto3.Session(profile_name=os.getenv("AWS_PROFILE"))
 
 @retry(stop=stop_after_attempt(5), wait=wait_random_exponential(min=10, max=60), retry=retry_if_exception_type(requests.RequestException))
 def get_us_data(brand_name):
@@ -30,6 +34,10 @@ def get_us_data(brand_name):
         data = r.json()
     except ValueError as e:
         raise ValueError(f"Error parsing JSON response for brand name: {brand_name}") from e
+    
+    for c in data.get("results", []):
+        print(f"Found brand name in results: {c.get('openfda', {}).get('brand_name', [])}")
+
     if "results" in data and len(data["results"]) > 0:
         for item in data["results"]:
             if "openfda" in item and "brand_name" in item["openfda"]:
@@ -190,10 +198,32 @@ def main():
             print(f"Error processing brand name {brand_name}: {str(e)}")
         time.sleep(2)
 
+    ## Save Data of JSON file to S3 bucket
+    s3_client = session.client("s3", region_name=os.getenv("AWS_REGION"))
+    try:
+        s3_client.upload_file(file_name, os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name)
+        print(f"Successfully uploaded {file_name} to S3 bucket {os.getenv('BUCKET_NAME')}.")
+    except Exception as e:
+        print(f"Error uploading {file_name} to S3: {str(e)}")
+        return
+
+    ## Load Data of JSON file from S3 bucket
+    new_file_name = "downloaded_" + file_name
+    try:
+        s3_client.download_file(os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name, new_file_name)
+        print(f"Successfully downloaded {file_name} from S3 bucket {os.getenv('BUCKET_NAME')}.")
+    except Exception as e:
+        print(f"Error downloading {file_name} from S3: {str(e)}")
+        return
     ## After processing all drugs, upsert the records to the database
-    print(f"Number of records to upsert: {len(existing_data)}")
+    with open(new_file_name, "r", encoding="utf-8") as f:
+        existing_data = json.load(f)
+    try:
+        print(f"Number of records to upsert: {len(existing_data)}")
+    except Exception as e:
+        print(f"Error counting records to upsert: {str(e)}")
     # try:         
-    #     upsert_records_from_json(POSTGRES_ENDPOINT, file_name)
+    #     upsert_records_from_json(POSTGRES_ENDPOINT, new_file_name)
     # except Exception as e:
     #     print(f"Error upserting records to the database: {str(e)}")
 

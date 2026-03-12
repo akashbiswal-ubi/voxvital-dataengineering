@@ -2,8 +2,12 @@ name: Run Script for US Data
 
 on:
   schedule:
-    - cron: "30 5 * * 1"   # Runs every Monday at 11 AM IST
-  workflow_dispatch:       # Allows manual trigger
+    - cron: "30 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   run-script:
@@ -12,6 +16,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
