@@ -1,8 +1,8 @@
-name: Run Script for US Data
+name: Run Script for EU Data
 
 on:
   schedule:
-    - cron: "30 5 * * 1"
+    - cron: "30 5 * * 2"
   workflow_dispatch:
 
 permissions:
@@ -41,4 +41,8 @@ jobs:
           DATADUMP_PREFIX: ${{ secrets.DATADUMP_PREFIX }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
           UPDATE_PG_DATABASE: ${{ vars.UPDATE_PG_DATABASE }}
-        run: python src/us_data.py
+          LANDINGAI_API_KEY: ${{ secrets.LANDINGAI_API_KEY }}
+          AUTOMATED_UPLOAD_PREFIX: ${{ secrets.AUTOMATED_UPLOAD_PREFIX }}
+          EU_AUTOMATED_RUN: ${{ vars.EU_AUTOMATED_RUN }}
+          PREFIX: ${{ secrets.PREFIX }}
+        run: python src/eu_data.py

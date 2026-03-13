@@ -1,6 +1,10 @@
 import psycopg2
 import json
 import os
+import logging
+import logging_config
+
+logger = logging.getLogger(__name__)
 
 # Replace with your postgres endpoint
 USERNAME = os.getenv("DB_USERNAME")
@@ -13,7 +17,7 @@ def create_table(endpoint):
     try:
         # Connect to Postgres using the endpoint
         conn = psycopg2.connect(endpoint)
-        print("Connected to Postgres successfully.")
+        logger.info("Connected to Postgres successfully.")
         cursor = conn.cursor()
 
         create_table_query = """
@@ -36,10 +40,10 @@ def create_table(endpoint):
         cursor.execute(create_table_query)
         conn.commit()
 
-        print("Table DRUGS_LABELLING_INFORMATION created successfully.")
+        logger.info("Table DRUGS_LABELLING_INFORMATION created successfully.")
 
     except Exception as e:
-        print("Error creating table:", e)
+        logger.info("Error creating table:", e)
 
     finally:
         if cursor:
@@ -103,4 +107,4 @@ def upsert_records_from_json(endpoint, json_file):
     cursor.close()
     conn.close()
 
-    print("Records inserted/updated successfully.")
+    logger.info("Records inserted/updated successfully.")

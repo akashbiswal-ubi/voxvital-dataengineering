@@ -211,3 +211,4 @@ __marimo__/
 *.json
 .comments
 data_engineering.ipynb
+*.xlsx

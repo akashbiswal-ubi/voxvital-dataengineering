@@ -7,6 +7,10 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_i
 from dotenv import load_dotenv
 import time
 import boto3
+import logging
+import logging_config
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -17,7 +21,7 @@ if not os.getenv("AWS_PROFILE"):
 else:
     session = boto3.Session(profile_name=os.getenv("AWS_PROFILE"))
 
-@retry(stop=stop_after_attempt(5), wait=wait_random_exponential(min=10, max=60), retry=retry_if_exception_type(requests.RequestException))
+@retry(stop=stop_after_attempt(5), wait=wait_random_exponential(min=10, max=60), retry=retry_if_exception_type(requests.RequestException), reraise=True)
 def get_us_data(brand_name):
     url = "https://api.fda.gov/drug/label.json"
     params = {
@@ -36,7 +40,7 @@ def get_us_data(brand_name):
         raise ValueError(f"Error parsing JSON response for brand name: {brand_name}") from e
     
     for c in data.get("results", []):
-        print(f"Found brand name in results: {c.get('openfda', {}).get('brand_name', [])}")
+        logger.info(f"Found brand name in results: {c.get('openfda', {}).get('brand_name', [])}")
 
     if "results" in data and len(data["results"]) > 0:
         for item in data["results"]:
@@ -88,12 +92,12 @@ def create_mapping_us(doc, given_drug_name=None):
         mapping["active_ingredients"] += doc["active_ingredient"] if type(doc["active_ingredient"]) == str else " ".join(doc["active_ingredient"])
         ok_flag = 1
     except KeyError:
-        print(f"Warning: Active ingredients not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Active ingredients not found for {mapping['drug_name']}.")
     try:
         mapping["active_ingredients"] += doc["openfda"]["substance_name"]
         ok_flag = 1
     except KeyError:
-        print(f"Warning: Substance name not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Substance name not found for {mapping['drug_name']}.")
 
     if not ok_flag:
         raise KeyError("No active ingredients found for the drug.")
@@ -121,7 +125,7 @@ def create_mapping_us(doc, given_drug_name=None):
         mapping["manufacturer"] = doc["openfda"]["manufacturer_name"]
     except KeyError:
         mapping["manufacturer"] = []
-        print(f"Warning: Manufacturer name not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Manufacturer name not found for {mapping['drug_name']}.")
 
     # Add indications to mapping
     try:
@@ -136,17 +140,17 @@ def create_mapping_us(doc, given_drug_name=None):
         mapping["warnings_and_precautions"] += doc["warnings"] if type(doc["warnings"]) == str else "\n".join(doc["warnings"])
         ok_flag = 1
     except KeyError:
-        print(f"Warning: Warnings not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Warnings not found for {mapping['drug_name']}.")
     try:
         mapping["warnings_and_precautions"] += "\n" + (doc["precautions"] if type(doc["precautions"]) == str else "\n".join(doc["precautions"]))
         ok_flag = 1
     except KeyError:
-        print(f"Warning: Precautions not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Precautions not found for {mapping['drug_name']}.")
     try:
         mapping["warnings_and_precautions"] += "\n" + (doc["warnings_and_cautions"] if type(doc["warnings_and_cautions"]) == str else "\n".join(doc["warnings_and_cautions"]))
         ok_flag = 1
     except KeyError:
-        print(f"Warning: Warnings and cautions not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Warnings and cautions not found for {mapping['drug_name']}.")
     if not ok_flag:
         raise KeyError("No warnings and precautions information found for the drug.")
     
@@ -155,7 +159,7 @@ def create_mapping_us(doc, given_drug_name=None):
         mapping["storage_and_handling"] = doc["storage_and_handling"] if type(doc["storage_and_handling"]) == str else "\n".join(doc["storage_and_handling"])
     except KeyError:
         mapping["storage_and_handling"] = ""
-        print(f"Warning: Storage and handling information not found for {mapping['drug_name']}.")
+        logger.info(f"Warning: Storage and handling information not found for {mapping['drug_name']}.")
     
     # Add adverse_reactions to mapping
     try:
@@ -173,21 +177,21 @@ def main():
     df = pd.read_csv("top_25_drugs.csv", sep="\t")
 
     top_25_drugs = df["Drug"].to_list()
-    print(f"Starting pipeline for {len(top_25_drugs)} drugs.")
+    logger.info(f"Starting pipeline for {len(top_25_drugs)} drugs.")
 
     for brand_name in tqdm(top_25_drugs):
         try:
             current_doc = create_mapping_us(get_us_data(brand_name), given_drug_name=brand_name)
         except Exception as e:
-            print(f"Error processing brand name {brand_name}: {str(e)}")
+            logger.info(f"Error processing brand name {brand_name}: {str(e)}")
             continue
         try:
             if os.path.exists(file_name):
-                print("File already exists. Appending to JSON file.")
+                logger.info("File already exists. Appending to JSON file.")
                 with open(file_name, "r", encoding="utf-8") as f:
                     existing_data = json.load(f)
                 if f"{current_doc['drug_name'].upper()}_{current_doc['country']}" in existing_data:
-                    print(f"{current_doc['drug_name'].upper()}_{current_doc['country']} already exists in the JSON file. Replacing.")
+                    logger.info(f"{current_doc['drug_name'].upper()}_{current_doc['country']} already exists in the JSON file. Replacing.")
                 existing_data[f"{current_doc['drug_name'].upper()}_{current_doc['country']}"] = current_doc
             else:
                 existing_data = {f"{current_doc['drug_name'].upper()}_{current_doc['country']}": current_doc}
@@ -195,39 +199,42 @@ def main():
             with open(file_name, "w", encoding="utf-8") as f:
                 json.dump(existing_data, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            print(f"Error processing brand name {brand_name}: {str(e)}")
+            logger.info(f"Error processing brand name {brand_name}: {str(e)}")
         time.sleep(2)
 
     ## Save Data of JSON file to S3 bucket
     s3_client = session.client("s3", region_name=os.getenv("AWS_REGION"))
     try:
-        print(f"Uploading {file_name} to S3 path {os.getenv('BUCKET_NAME')}/{os.getenv('DATADUMP_PREFIX')}{file_name}...")
-        print(f"File size: {os.path.getsize(file_name)} bytes")
+        logger.info(f"Uploading {file_name} to S3 path {os.getenv('BUCKET_NAME')}/{os.getenv('DATADUMP_PREFIX')}{file_name}...")
+        logger.info(f"File size: {os.path.getsize(file_name)} bytes")
         s3_client.upload_file(file_name, os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name)
-        print(f"Successfully uploaded {file_name} to S3 bucket {os.getenv('BUCKET_NAME')}.")
+        logger.info(f"Successfully uploaded {file_name} to S3 bucket {os.getenv('BUCKET_NAME')}.")
     except Exception as e:
-        print(f"Error uploading {file_name} to S3: {str(e)}")
+        logger.info(f"Error uploading {file_name} to S3: {str(e)}")
         return
 
     ## Load Data of JSON file from S3 bucket
     new_file_name = "downloaded_" + file_name
     try:
         s3_client.download_file(os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name, new_file_name)
-        print(f"Successfully downloaded {file_name} from S3 bucket {os.getenv('BUCKET_NAME')}.")
+        logger.info(f"Successfully downloaded {file_name} from S3 bucket {os.getenv('BUCKET_NAME')}.")
     except Exception as e:
-        print(f"Error downloading {file_name} from S3: {str(e)}")
+        logger.info(f"Error downloading {file_name} from S3: {str(e)}")
         return
     ## After processing all drugs, upsert the records to the database
     with open(new_file_name, "r", encoding="utf-8") as f:
         existing_data = json.load(f)
     try:
-        print(f"Number of records to upsert: {len(existing_data)}")
+        logger.info(f"Number of records to upsert: {len(existing_data)}")
     except Exception as e:
-        print(f"Error counting records to upsert: {str(e)}")
-    # try:         
-    #     upsert_records_from_json(POSTGRES_ENDPOINT, new_file_name)
-    # except Exception as e:
-    #     print(f"Error upserting records to the database: {str(e)}")
+        logger.info(f"Error counting records to upsert: {str(e)}")
+    if os.getenv("UPDATE_PG_DATABASE", "false").lower() != "true":
+        logger.info("Skipping database update as UPDATE_PG_DATABASE is set to false.")
+    else:
+        try:         
+            upsert_records_from_json(POSTGRES_ENDPOINT, new_file_name)
+        except Exception as e:
+            logger.info(f"Error upserting records to the database: {str(e)}")
 
 if __name__ == "__main__":
     main()

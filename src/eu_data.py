@@ -8,14 +8,23 @@ from botocore.exceptions import ClientError
 import time
 import pandas as pd
 from tqdm import tqdm
+import logging
+import logging_config
+
+logger = logging.getLogger(__name__)
+from scrape import download_drug_pdf, remove_all_pdf, save_pdf_in_s3
 
 load_dotenv()  # Load environment variables from .env file
 
 from db_operations import upsert_records_from_json, POSTGRES_ENDPOINT
 
-session = boto3.Session(profile_name=os.getenv("AWS_PROFILE"))
+if not os.getenv("AWS_PROFILE"):
+    session = boto3.Session()
+else:
+    session = boto3.Session(profile_name=os.getenv("AWS_PROFILE"))
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 PREFIX = os.getenv("PREFIX")
+AUTOMATED_UPLOAD_PREFIX = os.getenv("AUTOMATED_UPLOAD_PREFIX").replace("TIMESTAMP", str(int(time.time())))
 
 # Define your extraction schema as a dictionary
 schema_dict = {
@@ -182,23 +191,33 @@ def create_mapping_eu(brand_name):
 def main():
     file_name = f"drug_labels_eu_top_25_{int(time.time())}.json"
     df = pd.read_csv("top_25_drugs.csv", sep="\t")
+    s3_client = session.client("s3", region_name=os.getenv("AWS_REGION"))
 
-    top_25_drugs = df["Drug"].to_list()[16:]
-    print(f"Starting pipeline for {len(top_25_drugs)} drugs.")
+    top_25_drugs = df["Drug"].to_list()[24:25]
+    logger.info(f"Starting pipeline for {len(top_25_drugs)} drugs.")
 
     for brand_name in tqdm(top_25_drugs):
         try:
+            if os.getenv("EU_AUTOMATED_RUN", "false").lower() != "true":
+                logger.info("Skipping automated run as EU_AUTOMATED_RUN is set to false.")
+                
+            else:
+                # Download PDF and save shoertened version to S3 bucket
+                pdf_filename = download_drug_pdf(brand_name)
+                save_pdf_in_s3(s3_client, BUCKET_NAME, AUTOMATED_UPLOAD_PREFIX, pdf_filename)
+                remove_all_pdf()
+                PREFIX = AUTOMATED_UPLOAD_PREFIX
             current_doc = create_mapping_eu(brand_name)
         except Exception as e:
-            print(f"Error processing brand name {brand_name}: {str(e)}")
+            logger.info(f"Error processing brand name {brand_name}: {str(e)}")
             continue
         try:
             if os.path.exists(file_name):
-                print("File already exists. Appending to JSON file.")
+                logger.info("File already exists. Appending to JSON file.")
                 with open(file_name, "r", encoding="utf-8") as f:
                     existing_data = json.load(f)
                 if f"{current_doc['drug_name'].upper()}_{current_doc['country']}" in existing_data:
-                    print(f"{current_doc['drug_name'].upper()}_{current_doc['country']} already exists in the JSON file. Replacing.")
+                    logger.info(f"{current_doc['drug_name'].upper()}_{current_doc['country']} already exists in the JSON file. Replacing.")
                 existing_data[f"{current_doc['drug_name'].upper()}_{current_doc['country']}"] = current_doc
             else:
                 existing_data = {f"{current_doc['drug_name'].upper()}_{current_doc['country']}": current_doc}
@@ -206,14 +225,42 @@ def main():
             with open(file_name, "w", encoding="utf-8") as f:
                 json.dump(existing_data, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            print(f"Error processing brand name {brand_name}: {str(e)}")
+            logger.info(f"Error processing brand name {brand_name}: {str(e)}")
         time.sleep(30)
 
-    ## After processing all drugs, upsert the records to the database
-    try:         
-        upsert_records_from_json(POSTGRES_ENDPOINT, file_name)
+    ## Save Data of JSON file to S3 bucket
+    try:
+        logger.info(f"Uploading {file_name} to S3 path {os.getenv('BUCKET_NAME')}/{os.getenv('DATADUMP_PREFIX')}{file_name}...")
+        logger.info(f"File size: {os.path.getsize(file_name)} bytes")
+        s3_client.upload_file(file_name, os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name)
+        logger.info(f"Successfully uploaded {file_name} to S3 bucket {os.getenv('BUCKET_NAME')}.")
     except Exception as e:
-        print(f"Error upserting records to the database: {str(e)}")
+        logger.info(f"Error uploading {file_name} to S3: {str(e)}")
+        return
+
+    ## Load Data of JSON file from S3 bucket
+    new_file_name = "downloaded_" + file_name
+    try:
+        s3_client.download_file(os.getenv("BUCKET_NAME"), os.getenv("DATADUMP_PREFIX") + file_name, new_file_name)
+        logger.info(f"Successfully downloaded {file_name} from S3 bucket {os.getenv('BUCKET_NAME')}.")
+    except Exception as e:
+        logger.info(f"Error downloading {file_name} from S3: {str(e)}")
+        return
+
+    ## After processing all drugs, upsert the records to the database
+    with open(new_file_name, "r", encoding="utf-8") as f:
+        existing_data = json.load(f)
+    try:
+        logger.info(f"Number of records to upsert: {len(existing_data)}")
+    except Exception as e:
+        logger.info(f"Error counting records to upsert: {str(e)}")
+    if os.getenv("UPDATE_PG_DATABASE", "false").lower() != "true":
+        logger.info("Skipping database update as UPDATE_PG_DATABASE is set to false.")
+    else:
+        try:         
+            upsert_records_from_json(POSTGRES_ENDPOINT, new_file_name)
+        except Exception as e:
+            logger.info(f"Error upserting records to the database: {str(e)}")
 
 main()
 
