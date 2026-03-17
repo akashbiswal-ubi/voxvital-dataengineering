@@ -1,8 +1,8 @@
 name: Run Script for US Data
 
 on:
-  schedule:
-    - cron: "30 5 * * 1"
+  # schedule:
+  #   - cron: "30 5 * * 1"
   workflow_dispatch:
 
 permissions:
